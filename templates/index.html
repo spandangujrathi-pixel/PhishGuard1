@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhishGuard | URL Threat Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="wrap">
+    <header class="top">
+        <div class="brand">
+            <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.500 6v5.500c0 4.500 3.200 7.700 7.500 9.500 4.300-1.800 7.500-5 7.500-9.500V6L12 3Z"/><path d="m9 12 2 2 4-4"/></svg></div>
+            <div>PhishGuard <small>v2.0</small></div>
+        </div>
+        <div class="pill"><i></i> RULE-BASED ENGINE ONLINE</div>
+    </header>
+
+    <section class="hero">
+        <p class="eyebrow">Security analysis console</p>
+        <h1>Investigate a URL.<br>Understand the risk.</h1>
+        <p class="lead">Analyze URL structure, suspicious patterns and possible brand impersonation without opening the submitted website.</p>
+        <div class="stats">
+            <div class="stat"><span>Scans this session</span><strong id="scanCount">0</strong></div>
+            <div class="stat"><span>High-risk results</span><strong id="riskCount">0</strong></div>
+            <div class="stat"><span>Engine status</span><strong class="on">Online</strong></div>
+        </div>
+    </section>
+
+    <main>
+        <section class="card">
+            <p class="eyebrow">New investigation</p>
+            <label for="urlInput">Target URL</label>
+            <div class="input-row">
+                <input id="urlInput" type="text" placeholder="https://paypal-login.example.com/verify" autocomplete="off" spellcheck="false">
+                <button id="analyzeBtn" class="go" onclick="analyzeURL()">Analyze URL →</button>
+            </div>
+            <p id="msg" class="msg" role="alert"></p>
+            <div class="samples">
+                <span>Try a controlled sample</span>
+                <button class="chip" onclick="setURL('https://www.wikipedia.org')">Normal-looking URL</button>
+                <button class="chip" onclick="setURL('http://192.168.1.10/login/verify/account')">Suspicious URL</button>
+                <button class="chip" onclick="setURL('https://paypa1-secure-login.example.com/verify')">Brand-similarity sample</button>
+            </div>
+            <p class="note">Safety note: PhishGuard analyzes the text of the URL. It does not visit the submitted website.</p>
+        </section>
+
+        <section id="result" class="hidden" aria-live="polite">
+            <div id="resultBox">
+                <div class="card result-head">
+                    <div>
+                        <p class="eyebrow">Investigation result</p>
+                        <h2 id="verdict" class="verdict"></h2>
+                        <p id="domainText" class="host"></p>
+                        <p id="stamp" class="stamp"></p>
+                    </div>
+                    <div class="ring">
+                        <svg viewBox="0 0 150 150" role="img" aria-label="Risk score">
+                            <circle class="track" cx="75" cy="75" r="64" fill="none" stroke-width="10"/>
+                            <circle id="arc" class="arc" cx="75" cy="75" r="64" fill="none" stroke-width="10" stroke-linecap="round" stroke-dasharray="402.12" stroke-dashoffset="402.12" transform="rotate(-90 75 75)"/>
+                            <text id="score" class="n" x="68" y="86" text-anchor="end">0</text>
+                            <text class="d" x="72" y="86">/100</text>
+                        </svg>
+                        Estimated risk score
+                    </div>
+                </div>
+
+                <div class="grid">
+                    <div class="card">
+                        <div class="card-head"><h3>Detection evidence</h3><span class="tag">EXPLAINABLE</span></div>
+                        <div id="evidence"></div>
+                        <div class="action"><b>Recommended action</b><p id="action"></p></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head"><h3>URL fingerprint</h3></div>
+                        <dl id="features" class="facts"></dl>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card history">
+            <div class="card-head">
+                <h3>Recent analysis</h3>
+                <button class="clear" onclick="clearHistory()">Clear history</button>
+            </div>
+            <div id="history"></div>
+        </section>
+    </main>
+
+    <footer>PhishGuard is an academic cybersecurity project. A low score does not guarantee that a website is safe.</footer>
+</div>
+
+<script>
+const CIRC = 402.12;
+let historyData = [];
+try { historyData = JSON.parse(localStorage.getItem("phishguard_history") || "[]"); } catch (e) {}
+let scans = 0, risky = 0;
+
+const $ = id => document.getElementById(id);
+const showMsg = t => { $("msg").textContent = t || ""; };
+const setURL = url => { $("urlInput").value = url; analyzeURL(); };
+
+async function analyzeURL() {
+    const btn = $("analyzeBtn");
+    const url = $("urlInput").value.trim();
+    showMsg("");
+    if (!url) { showMsg("Enter a URL above, then select Analyze URL."); $("urlInput").focus(); return; }
+
+    btn.disabled = true; btn.textContent = "Analyzing...";
+    try {
+        const response = await fetch("/analyze", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({url})
+        });
+        const data = await response.json();
+        if (!response.ok) { showMsg(data.error || "Couldn't analyze that URL. Check it and try again."); return; }
+        scans++; if (data.level === "danger") risky++;
+        $("scanCount").textContent = scans; $("riskCount").textContent = risky;
+        showResult(data);
+        saveHistory(data);
+    } catch (error) {
+        showMsg("Can't reach the PhishGuard server. Make sure app.py is still running.");
+    } finally {
+        btn.disabled = false; btn.textContent = "Analyze URL →";
+    }
+}
+
+function showResult(d) {
+    $("result").classList.remove("hidden");
+    $("resultBox").className = d.level;
+    $("verdict").textContent = d.verdict;
+    $("domainText").textContent = d.domain;
+    $("stamp").textContent = "Analyzed: " + d.analyzed_at;
+    $("score").textContent = d.score;
+    $("action").textContent = d.action;
+
+    const arc = $("arc");
+    arc.style.strokeDashoffset = CIRC;
+    requestAnimationFrame(() => requestAnimationFrame(() => { arc.style.strokeDashoffset = CIRC * (1 - d.score / 100); }));
+
+    $("evidence").innerHTML = d.evidence.map(e => `
+        <div class="ev ${e.status === "ok" ? "ok" : ""}">
+            <div class="ev-top"><strong>${escapeHTML(e.title)}</strong><span class="pts">${e.status === "ok" ? "OK" : "+" + e.points}</span></div>
+            <p>${escapeHTML(e.detail)}</p>
+        </div>`).join("");
+
+    const f = d.features;
+    const yn = (v, label) => v ? `<dd class="bad">${label || "Yes"}</dd>` : `<dd>${label === "Detected" ? "Not detected" : "No"}</dd>`;
+    $("features").innerHTML = `
+        <div><dt>Protocol</dt><dd>${escapeHTML(f.protocol)}</dd></div>
+        <div><dt>Hostname</dt><dd>${escapeHTML(f.hostname)}</dd></div>
+        <div><dt>URL length</dt><dd>${f.length} characters</dd></div>
+        <div><dt>Subdomains</dt><dd>${f.subdomains}</dd></div>
+        <div><dt>Suspicious keywords</dt><dd>${f.keyword_count}</dd></div>
+        <div><dt>Raw IP host</dt>${yn(f.raw_ip)}</div>
+        <div><dt>URL shortener</dt>${yn(f.shortener)}</div>
+        <div><dt>Punycode</dt>${yn(f.punycode, "Detected")}</div>
+        <div><dt>Brand similarity</dt>${f.brand ? `<dd class="bad">${escapeHTML(f.brand)}</dd>` : "<dd>None</dd>"}</div>`;
+
+    $("result").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
+}
+
+function saveHistory(d) {
+    historyData = historyData.filter(h => h.url !== d.url);
+    historyData.unshift({url: d.url, verdict: d.verdict, level: d.level, score: d.score, time: new Date().toLocaleString()});
+    historyData = historyData.slice(0, 8);
+    try { localStorage.setItem("phishguard_history", JSON.stringify(historyData)); } catch (e) {}
+    renderHistory();
+}
+
+function renderHistory() {
+    const box = $("history");
+    if (!historyData.length) { box.innerHTML = '<p class="empty">No URLs analyzed yet. Paste a link above to start.</p>'; return; }
+    box.innerHTML = historyData.map((h, i) => `
+        <button class="row" onclick="setURL(historyData[${i}].url)" title="Analyze again">
+            <span>${escapeHTML(h.url)}<small>${escapeHTML(h.time)}</small></span>
+            <span class="badge ${h.level || (h.score >= 60 ? "danger" : h.score >= 30 ? "warning" : "safe")}">${escapeHTML(h.verdict)} · ${h.score}/100</span>
+        </button>`).join("");
+}
+
+function clearHistory() {
+    historyData = [];
+    try { localStorage.removeItem("phishguard_history"); } catch (e) {}
+    renderHistory();
+}
+
+function escapeHTML(v) {
+    return String(v).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
+}
+
+renderHistory();
+$("urlInput").addEventListener("keydown", e => { if (e.key === "Enter") analyzeURL(); });
+</script>
+</body>
+</html>
